@@ -89,6 +89,8 @@ func router(ctx context.Context, localClusterEnabled bool, tunnelAuthorizer *mcm
 	unauthed.PathPrefix("/v1-{prefix}-release/release").Handler(channelserver)
 	unauthed.PathPrefix("/v1-saml").Handler(saml.AuthHandler())
 	unauthed.PathPrefix("/v3-public").Handler(publicAPI)
+	unauthed.PathPrefix("/k8s/clusters/{cluster}/.well-known").Handler(k8sProxy)
+	unauthed.PathPrefix("/k8s/clusters/{cluster}/openid").Handler(k8sProxy)
 
 	// Authenticated routes
 	authed := mux.NewRouter()

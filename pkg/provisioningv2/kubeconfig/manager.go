@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierror "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -230,10 +231,33 @@ func (m *Manager) GetCRTBForClusterOwner(cluster *v1.Cluster, status v1.ClusterS
 	}, nil
 }
 
+func testConnection(cluster *v1.Cluster, data []byte) error {
+	if !cluster.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig(data)
+	if err != nil {
+		return err
+	}
+
+	d, err := discovery.NewDiscoveryClientForConfig(restConfig)
+	if err != nil {
+		return err
+	}
+
+	_, err = d.ServerVersion()
+	if status, ok := err.(*apierror.StatusError); ok && status.ErrStatus.Code >= 200 && status.ErrStatus.Code < 500 {
+		return nil
+	}
+	return err
+}
+
 func (m *Manager) getKubeConfigData(cluster *v1.Cluster, secretName, managementClusterName string) (map[string][]byte, error) {
+	serverURL, cacert := settings.InternalServerURL.Get(), settings.InternalCACerts.Get()
 	secret, err := m.secretCache.Get(cluster.Namespace, secretName)
 	if err == nil {
-		if secret.Data == nil || secret.Data["token"] == nil || len(secret.OwnerReferences) == 0 {
+		if secret.Data == nil || secret.Data["token"] == nil || len(secret.OwnerReferences) == 0 ||
+			string(secret.Data["cacert-setting"]) != cacert || string(secret.Data["server-url-setting"]) != serverURL {
 			// Check if we require a new secret based on the token value and annotation(s). We delete the old secret since it may contain
 			// annotations, owner references, etc. that are out of date. We will then continue to create the new secret.
 			if err := m.secrets.Delete(cluster.Namespace, secretName, &metav1.DeleteOptions{}); err != nil && !apierror.IsNotFound(err) {
@@ -260,7 +284,6 @@ func (m *Manager) getKubeConfigData(cluster *v1.Cluster, secretName, managementC
 		return nil, err
 	}
 
-	serverURL, cacert := settings.InternalServerURL.Get(), settings.InternalCACerts.Get()
 	if serverURL == "" {
 		return nil, errors.New("server url is missing, can't generate kubeconfig for fleet import cluster")
 	}
@@ -289,6 +312,36 @@ func (m *Manager) getKubeConfigData(cluster *v1.Cluster, secretName, managementC
 		return nil, err
 	}
 
+	if connErr := testConnection(cluster, data); connErr != nil {
+		noCAData, err := clientcmd.Write(clientcmdapi.Config{
+			Clusters: map[string]*clientcmdapi.Cluster{
+				"cluster": {
+					Server: fmt.Sprintf("%s/k8s/clusters/%s", serverURL, managementClusterName),
+				},
+			},
+			AuthInfos: map[string]*clientcmdapi.AuthInfo{
+				"user": {
+					Token: tokenValue,
+				},
+			},
+			Contexts: map[string]*clientcmdapi.Context{
+				"default": {
+					Cluster:  "cluster",
+					AuthInfo: "user",
+				},
+			},
+			CurrentContext: "default",
+		})
+		if err != nil {
+			return nil, err
+		}
+		if conn2Err := testConnection(cluster, noCAData); conn2Err == nil {
+			data = noCAData
+		} else {
+			return nil, connErr
+		}
+	}
+
 	secret, err = m.secrets.Create(&corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: cluster.Namespace,
@@ -301,8 +354,10 @@ func (m *Manager) getKubeConfigData(cluster *v1.Cluster, secretName, managementC
 			}},
 		},
 		Data: map[string][]byte{
-			"value": data,
-			"token": []byte(tokenValue),
+			"value":              data,
+			"token":              []byte(tokenValue),
+			"cacert-setting":     []byte(cacert),
+			"server-url-setting": []byte(serverURL),
 		},
 	})
 	if err != nil {

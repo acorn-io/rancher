@@ -88,6 +88,15 @@ func addUserConfig(config map[string]interface{}, controlPlane *rkev1.RKEControl
 	return nil
 }
 
+func addServiceIssuer(config map[string]interface{}, controlPlane *rkev1.RKEControlPlane, entry *planEntry) {
+	if isControlPlane(entry) {
+		config["kube-apiserver-arg"] = append(convert.ToStringSlice(config["kube-apiserver-arg"]),
+			fmt.Sprintf("service-account-issuer=%s/k8s/clusters/%s", settings.ServerURL.Get(), controlPlane.Spec.ManagementClusterName))
+		config["kube-apiserver-arg"] = append(convert.ToStringSlice(config["kube-apiserver-arg"]),
+			fmt.Sprintf("service-account-jwks-uri=%s/k8s/clusters/%s/openid/v1/jwks", settings.ServerURL.Get(), controlPlane.Spec.ManagementClusterName))
+	}
+}
+
 func addRoleConfig(config map[string]interface{}, controlPlane *rkev1.RKEControlPlane, entry *planEntry, initNode bool, joinServer string) {
 	runtime := rke2.GetRuntime(controlPlane.Spec.KubernetesVersion)
 	if initNode {
@@ -390,6 +399,8 @@ func (p *Planner) addConfigFile(nodePlan plan.NodePlan, controlPlane *rkev1.RKEC
 	if err := addUserConfig(config, controlPlane, entry); err != nil {
 		return nodePlan, config, err
 	}
+
+	addServiceIssuer(config, controlPlane, entry)
 
 	files, err := p.addRegistryConfig(config, controlPlane)
 	if err != nil {

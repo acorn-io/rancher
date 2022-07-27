@@ -10,6 +10,7 @@ import (
 	authcommon "github.com/rancher/rancher/pkg/auth/providers/common"
 	v3 "github.com/rancher/rancher/pkg/generated/norman/management.cattle.io/v3"
 	"github.com/rancher/rancher/pkg/types/config"
+	"github.com/rancher/wrangler/pkg/slice"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -367,6 +368,14 @@ func (i *Impersonator) waitForServiceAccount(sa *corev1.ServiceAccount) (*corev1
 }
 
 func (i *Impersonator) getUser(userInfo user.Info) (user.Info, error) {
+	if slice.ContainsString(userInfo.GetGroups(), "system:unauthenticated") {
+		return &user.DefaultInfo{
+			Name:   "cattle-anonymous",
+			UID:    "cattle-anonymous",
+			Groups: []string{"cattle:unauthenticated}"},
+		}, nil
+	}
+
 	u, err := i.userLister.Get("", userInfo.GetUID())
 	if err != nil {
 		return &user.DefaultInfo{}, err

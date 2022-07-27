@@ -233,6 +233,7 @@ func (r *RemoteService) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			er.Error(rw, req, validation.Unauthorized)
 			return
 		}
+
 		token, err := r.getImpersonatorAccountToken(userInfo)
 		if err != nil && !strings.Contains(err.Error(), dialer2.ErrAgentDisconnected.Error()) {
 			er.Error(rw, req, fmt.Errorf("unable to create impersonator account: %w", err))

@@ -2,6 +2,7 @@ package machinenodelookup
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"time"
@@ -98,6 +99,10 @@ func (h *handler) associateMachineWithNode(_ string, bootstrap *rkev1.RKEBootstr
 	nodeLabelSelector := metav1.LabelSelector{MatchLabels: map[string]string{rke2.MachineUIDLabel: string(machine.GetUID())}}
 	nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{LabelSelector: labels.Set(nodeLabelSelector.MatchLabels).String()})
 	if err != nil || len(nodes.Items) == 0 || nodes.Items[0].Spec.ProviderID == "" || !condition.Cond("Ready").IsTrue(nodes.Items[0]) {
+		var e x509.UnknownAuthorityError
+		if errors.As(err, &e) {
+			logrus.Errorf("TLS failed attempting to talk to Rancher API, can not lookup machine to set join-url for %s: %v", machine.Name, e)
+		}
 		logrus.Debugf("Searching for providerID for selector %s in cluster %s/%s, machine %s: %v",
 			labels.Set(nodeLabelSelector.MatchLabels), rancherCluster.Namespace, rancherCluster.Name, machine.Name, err)
 		h.rkeBootstrap.EnqueueAfter(bootstrap.Namespace, bootstrap.Name, nodeErrorEnqueueTime)
